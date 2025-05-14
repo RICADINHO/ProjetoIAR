@@ -1,0 +1,93 @@
+#VRML_SIM R2023b utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/robots/mobsya/thymio/protos/Thymio2.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023b/projects/objects/solids/protos/SolidBox.proto"
+
+WorldInfo {
+  basicTimeStep 10
+  FPS 30
+  contactProperties [
+    ContactProperties {
+      material2 "thymio body"
+      coulombFriction [
+        0.7
+      ]
+    }
+  ]
+}
+Viewpoint {
+  orientation -0.1483389531096772 0.9493490210739091 0.2770053991826434 1.0271784979739993
+  position -2.882955334832513 -0.822338810716225 5.158222263506483
+  follow "Thymio II"
+  followType "None"
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+DEF ROBOT Thymio2 {
+  hidden position_0_0 -2.4222915776098634e-15
+  hidden position_0_1 5.583916002781828e-16
+  translation -3.863638293327698e-08 -4.698726670769593e-09 0.9999799321804731
+  rotation 0.004752585103947183 0.0003023276245273692 0.9999886607021288 -3.0145230111133405
+  controller "thymio_rl_controller"
+  window "thymio2"
+  supervisor TRUE
+}
+SolidBox {
+  translation -0.01 -4.69282e-08 0
+  rotation 0 0 1 4.692820414042842e-06
+  name "box(1)"
+  size 0.3 0.5 2
+  appearance PBRAppearance {
+    baseColor 0.8 0.8 0.8
+    roughness 0.5
+    metalness 0
+  }
+}
+SolidBox {
+  translation -0.28 0.5 0
+  rotation 0 0 1 4.692820414042842e-06
+  name "box(2)"
+  size 0.5 0.5 2
+  appearance PBRAppearance {
+    baseColor 0.8 0.8 0.8
+    roughness 0.5
+    metalness 0
+  }
+}
+SolidBox {
+  translation 0.24 -0.5 0
+  rotation 0 0 1 4.692820414042842e-06
+  name "box(3)"
+  size 0.5 0.5 2
+  appearance PBRAppearance {
+    baseColor 0.8 0.8 0.8
+    roughness 0.5
+    metalness 0
+  }
+}
+SolidBox {
+  translation 0.22 0.5 0
+  rotation 0 0 1 4.692820414042842e-06
+  name "box(4)"
+  size 0.5 0.5 2
+  appearance PBRAppearance {
+    baseColor 0.8 0.8 0.8
+    roughness 0.5
+    metalness 0
+  }
+}
+SolidBox {
+  translation -0.26 -0.5 0
+  rotation 0 0 1 4.692820414042842e-06
+  name "box(5)"
+  size 0.5 0.5 2
+  appearance PBRAppearance {
+    baseColor 0.8 0.8 0.8
+    roughness 0.5
+    metalness 0
+  }
+}
