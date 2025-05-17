@@ -1,0 +1,4 @@
+Generation,Best_Fitness,Avg_Fitness,Net_Displacement,Time_On_Line,Standstill_Count,Stagnation_Counter,Weights_Filename
+1,248.2321,81.1018,2.011,1728,455,0,gen_0001.npy
+2,233.7414,179.3555,1.968,1330,112,1,gen_0002.npy
+3,234.8467,128.8021,2.061,1453,115,2,gen_0003.npy
