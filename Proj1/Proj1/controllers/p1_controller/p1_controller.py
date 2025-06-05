@@ -34,7 +34,11 @@ BEST_WEIGHTS_FILE = "best_weights_direct.npy"
 
 
 def random_orientation():
-    """Gera uma orientação aleatória para o robô."""
+    """Gera uma orientação aleatória para o robô.
+    
+    Returns:
+        list: Lista com rotação no formato [x, y, z, angle]
+    """
     angle = np.random.uniform(0, 2*np.pi)
     return [0, 0, 1, angle]
 
@@ -90,7 +94,14 @@ class Evolution:
         self.collision = False
 
     def runStep(self, weights):
-        """Executa um passo da simulação com os pesos fornecidos."""
+        """Executa um passo da simulação.
+        
+        Args:
+            weights: Array de pesos para controlo dos motores
+            
+        Returns:
+            bool: True se a simulação deve continuar, False caso contrário
+        """
         self.step_count += 1
         
         if self.collision:
@@ -140,7 +151,14 @@ class Evolution:
         return True
 
     def evaluate_individual(self, weights):
-        """Avalia a aptidão de um indivíduo com base nos pesos fornecidos."""
+        """Avalia a aptidão de um indivíduo.
+        
+        Args:
+            weights: Array de pesos do indivíduo a avaliar
+            
+        Returns:
+            dict: Dicionário com métricas de desempenho e aptidão
+        """
         self.reset()
         
         max_steps = int(EVALUATION_TIME * 1000 / self.timestep)
@@ -169,14 +187,29 @@ class Evolution:
         }
 
     def mutate(self, weights):
-        """Aplica mutação aos pesos de um indivíduo."""
+        """Aplica mutação aos pesos de um indivíduo.
+        
+        Args:
+            weights: Array de pesos a mutar
+            
+        Returns:
+            np.array: Novo array de pesos mutados
+        """
         new_weights = weights.copy()
         mask = np.random.random(len(new_weights)) < MUTATION_RATE
         new_weights[mask] += np.random.uniform(-MUTATION_SIZE, MUTATION_SIZE, mask.sum())
         return new_weights
 
     def crossover(self, parent1, parent2):
-        """Realiza cruzamento entre dois progenitores usando ponto único."""
+        """Realiza cruzamento entre dois progenitores.
+        
+        Args:
+            parent1: Array de pesos do primeiro progenitor
+            parent2: Array de pesos do segundo progenitor
+            
+        Returns:
+            tuple: Dois arrays de pesos descendentes
+        """
         point = random.randint(1, GENOME_SIZE - 1)
         return (np.concatenate((parent1[:point], parent2[point:])),
                 np.concatenate((parent2[:point], parent1[point:])))
@@ -193,7 +226,13 @@ class Evolution:
                 ])
 
     def _log_generation(self, gen, best_result, avg_fitness):
-        """Regista os dados de uma geração no ficheiro CSV."""
+        """Regista os dados de uma geração no ficheiro CSV.
+        
+        Args:
+            gen: Número da geração
+            best_result: Dicionário com os resultados do melhor indivíduo
+            avg_fitness: Aptidão média da população
+        """
         with open(CSV_FILENAME, 'a', newline='') as f:
             csv.writer(f).writerow([
                 gen + 1, round(best_result['fitness'], 4), round(avg_fitness, 4),
@@ -204,7 +243,11 @@ class Evolution:
             ])
 
     def run_evolution(self):
-        """Executa o algoritmo evolutivo principal."""
+        """Executa o algoritmo evolutivo principal.
+        
+        Returns:
+            np.array: Melhores pesos encontrados durante a evolução
+        """
         print(f"=== Evolution Started: {POPULATION_SIZE} pop, {GENERATIONS} gens ===")
 
         for generation in range(GENERATIONS):
