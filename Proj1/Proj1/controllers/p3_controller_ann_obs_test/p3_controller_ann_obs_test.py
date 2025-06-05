@@ -10,40 +10,58 @@ EVALUATION_TIME = 100
 RANGE = 9
 
 INPUT = 5
-HIDDEN = 7
+HIDDEN1 = 11
+HIDDEN2 = 7 
 OUTPUT = 2
 
 GROUND_SENSOR_THRESHOLD = 200
 PROXIMITY_SENSOR_THRESHOLD_FOR_COLLISION = 2000
 
-STANDSTILL_CHECK_STEPS = 2
-STANDSTILL_POS_THRESHOLD = 0.005
-
 BEST_WEIGHTS_FILE = "best_weights_obstacules.npy"
-WEIGHTS_DIR_FOR_VIS = "generation_weights_obstacules"
 
 def random_orientation():
     angle = np.random.uniform(0, 2 * np.pi)
     return [0, 0, 1, angle]
-
+    
+def random_position(min_radius, max_radius, z):
+    r = np.sqrt(np.random.uniform(min_radius**2, max_radius**2))  
+    theta = np.random.uniform(0, 2 * np.pi)
+    x = r * np.cos(theta)
+    y = r * np.sin(theta)
+    return (x, y, z)
+    
+    
 class SimpleANN:
     def __init__(self, weights):
-        idx_w1 = HIDDEN * (INPUT + 1)
-        self.w1 = weights[:idx_w1].reshape(HIDDEN, INPUT + 1)
-        self.w2 = weights[idx_w1:].reshape(OUTPUT, HIDDEN + 1)
-
+        # Calculate weight matrix indices for two hidden layers
+        idx_w1 = HIDDEN1 * (INPUT + 1)
+        idx_w2 = idx_w1 + HIDDEN2 * (HIDDEN1 + 1)
+        
+        # Split weights into three matrices
+        self.w1 = weights[:idx_w1].reshape(HIDDEN1, INPUT + 1)                    # Input to Hidden1
+        self.w2 = weights[idx_w1:idx_w2].reshape(HIDDEN2, HIDDEN1 + 1)           # Hidden1 to Hidden2
+        self.w3 = weights[idx_w2:].reshape(OUTPUT, HIDDEN2 + 1)                  # Hidden2 to Output
+    
     def tanh(self, x):
         return np.tanh(x)
-
+    
     def forward(self, inputs):
+        # Input layer to first hidden layer
         inputs_with_bias = np.append(inputs, 1.0)
-        hidden_inputs = np.dot(self.w1, inputs_with_bias)
-        hidden_outputs = self.tanh(hidden_inputs)
-
-        hidden_with_bias = np.append(hidden_outputs, 1.0)
-        final_inputs = np.dot(self.w2, hidden_with_bias)
+        hidden1_inputs = np.dot(self.w1, inputs_with_bias)
+        hidden1_outputs = self.tanh(hidden1_inputs)
+        
+        # First hidden layer to second hidden layer
+        hidden1_with_bias = np.append(hidden1_outputs, 1.0)
+        hidden2_inputs = np.dot(self.w2, hidden1_with_bias)
+        hidden2_outputs = self.tanh(hidden2_inputs)
+        
+        # Second hidden layer to output layer
+        hidden2_with_bias = np.append(hidden2_outputs, 1.0)
+        final_inputs = np.dot(self.w3, hidden2_with_bias)
         final_outputs = self.tanh(final_inputs)
-
+        
+        # Scale outputs
         motor_outputs = final_outputs * RANGE
         return motor_outputs
 
@@ -51,6 +69,7 @@ class VisualizeSolution:
     def __init__(self):
         self.supervisor = Supervisor()
         self.robot_node = self.supervisor.getFromDef("ROBOT")
+        self.root = self.supervisor.getRoot()  # Add root node reference
 
         self.translation_field = self.robot_node.getField("translation")
         self.rotation_field = self.robot_node.getField("rotation")
@@ -85,32 +104,15 @@ class VisualizeSolution:
             if i in ann_prox_indices:
                 self.ann_proximity_sensors.append(sensor)
 
-        self.time_on_line = 0
-        self.steps_survived = 0
-        self.prev_position = None
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.position_history = deque(maxlen=STANDSTILL_CHECK_STEPS)
-        self.initial_orientation = None
-        self.collisions_count = 0
-
+        
     def runStepLogic(self, ann_model):
-        step_has_collision = False
-        for sensor in self.collision_proximity_sensors:
-            if sensor.getValue() > PROXIMITY_SENSOR_THRESHOLD_FOR_COLLISION:
-                step_has_collision = True
-                break
-        if step_has_collision:
-            self.collisions_count += 1
-
         raw_ground_sensor_values = [gs.getValue() for gs in self.ground_sensors]
         gs_max_value = 1023.0
         normalized_ground_inputs = [(val / gs_max_value) * 2.0 - 1.0 for val in raw_ground_sensor_values]
 
         raw_ann_proximity_values = [ps.getValue() for ps in self.ann_proximity_sensors]
         prox_max_value = 4230.0
-        normalized_ann_proximity_inputs = [(val / prox_max_value) * 2.0 - 0.5 for val in raw_ann_proximity_values]
+        normalized_ann_proximity_inputs = [(val / prox_max_value) * 2.0 - 1 for val in raw_ann_proximity_values]
 
         ann_inputs = np.concatenate((np.array(normalized_ground_inputs), np.array(normalized_ann_proximity_inputs)))
 
@@ -122,41 +124,50 @@ class VisualizeSolution:
         self.left_motor.setVelocity(left_speed)
         self.right_motor.setVelocity(right_speed)
 
-        current_position_vec3 = self.translation_field.getSFVec3f()
-        current_position = np.array([current_position_vec3[0], current_position_vec3[1]])
-
-        if self.prev_position is None:
-             self.prev_position = current_position
-
-        delta_position = current_position - self.prev_position
-
-        current_rotation_vec4 = self.rotation_field.getSFRotation()
-        orientation_angle = current_rotation_vec4[3]
-
-        robot_forward_direction = np.array([math.sin(orientation_angle), -math.cos(orientation_angle)])
-
-        movement_magnitude = np.linalg.norm(delta_position)
-        if movement_magnitude > 1e-4:
-            movement_direction = delta_position / movement_magnitude
-            dot_product = np.dot(movement_direction, robot_forward_direction)
-            if dot_product < -0.1:
-                self.backward_movement_count += 1
-
-        self.position_history.append(current_position.copy())
-        if len(self.position_history) == STANDSTILL_CHECK_STEPS:
-            pos_change = np.linalg.norm(self.position_history[-1] - self.position_history[0])
-            if pos_change < STANDSTILL_POS_THRESHOLD:
-                self.standstill_count += 1
-
-        is_on_line = (raw_ground_sensor_values[0] < GROUND_SENSOR_THRESHOLD or
-                      raw_ground_sensor_values[1] < GROUND_SENSOR_THRESHOLD)
-        if is_on_line:
-            self.time_on_line += 1
-            self.total_net_displacement_vector += delta_position
-
-        self.prev_position = current_position
-        self.steps_survived += 1
         return True
+        
+    def generate_boxes(self):
+        N = 7
+    
+        for i in range(N):
+            position = random_position(0.8, 1.2, 0.1)  # Fixed radius range
+            orientation = random_orientation()
+            length = np.random.uniform(0.05, 0.2)
+            width = np.random.uniform(0.05, 0.2)
+            
+            box_string = f"""
+            DEF WHITE_BOX_{i} Solid {{
+              translation {position[0]} {position[1]} {position[2]}
+              rotation {orientation[0]} {orientation[1]} {orientation[2]} {orientation[3]}
+              physics Physics {{
+                density 1000.0
+              }}
+              children [
+                Shape {{
+                  appearance Appearance {{
+                    material Material {{
+                      diffuseColor 1 1 1
+                    }}
+                  }}
+                  geometry Box {{
+                    size {length} {width} 0.2  
+                  }}
+                }}
+              ]
+              boundingObject Box {{
+                size {length} {width} 0.2  
+              }}
+            }}
+            """
+            self.root.getField('children').importMFNodeFromString(-1, box_string)
+
+    def del_boxes(self):
+        """Remove all boxes from the scene"""
+        children_field = self.root.getField('children')
+        for i in range(children_field.getCount() - 1, -1, -1):  # Iterate backwards
+            node = children_field.getMFNode(i)
+            if node and node.getTypeName() == "Solid" and node.getDef() and node.getDef().startswith("WHITE_BOX_"):
+                children_field.removeMF(i)
 
     def reset(self):
         self.robot_node.resetPhysics()
@@ -169,61 +180,53 @@ class VisualizeSolution:
 
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
-
-        self.time_on_line = 0
-        self.steps_survived = 0
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.collisions_count = 0
-        self.position_history.clear()
-
-        current_pos_vec3 = self.translation_field.getSFVec3f()
-        self.prev_position = np.array([current_pos_vec3[0], current_pos_vec3[1]])
-        self.initial_orientation = self.rotation_field.getSFRotation()
-
+        
+        # Generate boxes once at the beginning
+        self.generate_boxes()
+        print("Generated obstacle boxes")
 
     def _load_weights_from_file(self, filepath):
         loaded_weights = np.load(filepath)
         return loaded_weights
 
     def run_visualization(self, weights_file=None):
-        weights_to_run = None
-
+        # Load weights
         if weights_file:
             weights_to_run = self._load_weights_from_file(weights_file)
+            print(f"Loaded weights from: {weights_file}")
         else:
             weights_to_run = self._load_weights_from_file(BEST_WEIGHTS_FILE)
+            print(f"Loaded weights from: {BEST_WEIGHTS_FILE}")
 
+        # Set simulation to real-time mode
         self.supervisor.simulationSetMode(self.supervisor.SIMULATION_MODE_REAL_TIME)
         self.supervisor.step(self.basic_timestep)
 
+        # Reset robot position
         self.reset()
 
+        # Create neural network with loaded weights
         ann_instance = SimpleANN(weights_to_run)
-
-        max_sim_steps = int((EVALUATION_TIME * 1000) / self.timestep)
+        print("Neural network initialized. Starting robot...")
 
         start_time = self.supervisor.getTime()
 
+        # Main simulation loop
         while self.supervisor.step(self.timestep) != -1:
             current_sim_time = self.supervisor.getTime()
+            
+            # Stop after evaluation time
             if current_sim_time - start_time >= EVALUATION_TIME:
+                print(f"Simulation completed after {EVALUATION_TIME} seconds")
                 break
 
+            # Run one step of robot control
             self.runStepLogic(ann_instance)
 
-
-        net_displacement_magnitude = np.linalg.norm(self.total_net_displacement_vector)
-        print(f"Steps: {self.steps_survived}")
-        print(f"Time on line: {self.time_on_line} steps")
-        print(f"Net displacement: {net_displacement_magnitude:.3f}")
-        print(f"Standstill count: {self.standstill_count}")
-        print(f"Backward count: {self.backward_movement_count}")
-        print(f"Collision steps: {self.collisions_count}")
+        print("Robot simulation finished.")
+        print('-'*50)
 
 
 if __name__ == "__main__":
     visualizer = VisualizeSolution()
-
     visualizer.run_visualization()

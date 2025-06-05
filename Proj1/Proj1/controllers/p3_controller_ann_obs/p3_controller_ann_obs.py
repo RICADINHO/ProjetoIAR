@@ -7,364 +7,297 @@ import os
 import time
 from collections import deque
 
+# Configuration
 TIME_STEP = 5
 POPULATION_SIZE = 10
 PARENTS_KEEP = 3
 GENERATIONS = 1000
-STAGNATION_LIMIT = 10
-MUTATION_RATE = 0.6
-MUTATION_SIZE = 0.3
-EVALUATION_TIME = 130
-RANGE = 9
+STAGNATION_LIMIT = 30
+MUTATION_RATE = 0.3
+MUTATION_SIZE = 3
+EVALUATION_TIME = 100
 
-INPUT = 5
-HIDDEN = 7
-OUTPUT = 2
-GENOME_SIZE = HIDDEN * (INPUT + 1) + OUTPUT * (HIDDEN + 1)
+# Neural network
+INPUT, HIDDEN1, HIDDEN2, OUTPUT = 5, 11, 7, 2
+GENOME_SIZE = HIDDEN1*(INPUT+1) + HIDDEN2*(HIDDEN1+1) + OUTPUT*(HIDDEN2+1)
 
-GROUND_SENSOR_THRESHOLD = 200
+# Fitness weights
+GROUND_THRESHOLD = 200
+W_DISPLACEMENT, W_TIME_ON_LINE, W_BACKWARD, W_COLLISION = 3.0, 0.008, -0.006, -0.001
+STANDSTILL_THRESHOLD = 0.003
 
-W_NET_DISPLACEMENT = 100.0
-W_TIME_ON_LINE = 0.1
-W_BACKWARD_PENALTY = -0.1
-W_STANDSTILL_PENALTY = -0.1
-W_COLLISION = -0.01
+# Files
+CSV_FILE = "evolution_log_obstacles.csv"
+WEIGHTS_DIR = "generation_weights_obstacles"
+BEST_WEIGHTS_FILE = "best_weights_obstacles.npy"
 
-STANDSTILL_CHECK_STEPS = 2
-STANDSTILL_POS_THRESHOLD = 0.005
-
-CSV_FILENAME = "evolution_log_obstacules.csv"
-WEIGHTS_DIR = "generation_weights_obstacules"
-BEST_WEIGHTS_FILE = "best_weights_obstacules.npy"
+def random_position(min_r, max_r, z):
+    r = np.sqrt(np.random.uniform(min_r**2, max_r**2))
+    theta = np.random.uniform(0, 2*np.pi)
+    return (r*np.cos(theta), r*np.sin(theta), z)
 
 def random_orientation():
-    angle = np.random.uniform(0, 2 * np.pi)
-    return [0, 0, 1, angle]
-
-def angular_distance(angle1, angle2):
-    delta_angle = abs(angle1 - angle2)
-    delta_angle = delta_angle % (2 * math.pi)
-    return min(delta_angle, 2 * math.pi - delta_angle)
+    return [0, 0, 1, np.random.uniform(0, 2*np.pi)]
 
 class SimpleANN:
     def __init__(self, weights):
-        idx_w1 = HIDDEN * (INPUT + 1)
-        self.w1 = weights[:idx_w1].reshape(HIDDEN, INPUT + 1)
-        self.w2 = weights[idx_w1:].reshape(OUTPUT, HIDDEN + 1)
-    
-    def tanh(self, x):
-        return np.tanh(x)
+        i1 = HIDDEN1 * (INPUT + 1)
+        i2 = i1 + HIDDEN2 * (HIDDEN1 + 1)
+        self.w1 = weights[:i1].reshape(HIDDEN1, INPUT + 1)
+        self.w2 = weights[i1:i2].reshape(HIDDEN2, HIDDEN1 + 1)
+        self.w3 = weights[i2:].reshape(OUTPUT, HIDDEN2 + 1)
     
     def forward(self, inputs):
-        inputs_with_bias = np.append(inputs, 1.0)
-        hidden_inputs = np.dot(self.w1, inputs_with_bias)
-        hidden_outputs = self.tanh(hidden_inputs)  
-        hidden_with_bias = np.append(hidden_outputs, 1.0)
-        final_inputs = np.dot(self.w2, hidden_with_bias)
-        final_outputs = self.tanh(final_inputs)  
-        motor_outputs = final_outputs * RANGE
-        return motor_outputs
+        h1 = np.tanh(np.dot(self.w1, np.append(inputs, 1.0)))
+        h2 = np.tanh(np.dot(self.w2, np.append(h1, 1.0)))
+        return np.tanh(np.dot(self.w3, np.append(h2, 1.0))) * 9
 
 class Evolution:
     def __init__(self):
-        self.collision = False
         self.supervisor = Supervisor()
+        self.root = self.supervisor.getRoot()
         self.robot_node = self.supervisor.getFromDef("ROBOT")
         self.translation_field = self.robot_node.getField("translation")
         self.rotation_field = self.robot_node.getField("rotation")
+        
+        self.timestep = int(self.supervisor.getBasicTimeStep()) * TIME_STEP
         self.basic_timestep = int(self.supervisor.getBasicTimeStep())
-        self.timestep = self.basic_timestep * TIME_STEP
         self.supervisor.simulationSetMode(self.supervisor.SIMULATION_MODE_FAST)
 
+        # Motors
         self.left_motor = self.supervisor.getDevice('motor.left')
         self.right_motor = self.supervisor.getDevice('motor.right')
-        self.left_motor.setPosition(float('inf'))
-        self.right_motor.setPosition(float('inf'))
-        self.left_motor.setVelocity(0)
-        self.right_motor.setVelocity(0)
-        self.max_motor_velocity = self.left_motor.getMaxVelocity()
+        for motor in [self.left_motor, self.right_motor]:
+            motor.setPosition(float('inf'))
+            motor.setVelocity(0)
+        self.max_vel = self.left_motor.getMaxVelocity()
 
-        self.__ir_0 = self.supervisor.getDevice('prox.horizontal.0')
-        self.__ir_1 = self.supervisor.getDevice('prox.horizontal.1')
-        self.__ir_2 = self.supervisor.getDevice('prox.horizontal.2')
-        self.__ir_3 = self.supervisor.getDevice('prox.horizontal.3')
-        self.__ir_4 = self.supervisor.getDevice('prox.horizontal.4')
-        self.__ir_5 = self.supervisor.getDevice('prox.horizontal.5')
-        self.__ir_6 = self.supervisor.getDevice('prox.horizontal.6')
-        self.__ir_7 = self.supervisor.getDevice('prox.ground.0')
-        self.__ir_8 = self.supervisor.getDevice('prox.ground.1')
-
-        self.__ir_0.enable(self.timestep)
-        self.__ir_1.enable(self.timestep)
-        self.__ir_2.enable(self.timestep)
-        self.__ir_3.enable(self.timestep)
-        self.__ir_4.enable(self.timestep)
-        self.__ir_5.enable(self.timestep)
-        self.__ir_6.enable(self.timestep)
-        self.__ir_7.enable(self.timestep)
-        self.__ir_8.enable(self.timestep)
-
-        self.sensors = [self.__ir_0, self.__ir_2, self.__ir_4]
+        # Sensors
+        self.prox_sensors = [self.supervisor.getDevice(f'prox.horizontal.{i}') for i in range(7)]
         self.ground_sensors = [self.supervisor.getDevice(f'prox.ground.{i}') for i in range(2)]
-        self.__n = 0
         
-        self.time_on_line = 0
-        self.steps_survived = 0
-        self.collisions_time = 0
-        self.prev_position = self.translation_field.getSFVec3f()
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.position_history = deque(maxlen=STANDSTILL_CHECK_STEPS)
-        self.initial_orientation = None
+        for sensor in self.prox_sensors + self.ground_sensors:
+            sensor.enable(self.timestep)
 
-        self.population = self.create_initial_population()
-        self.overall_best_fitness = -float('inf')
+        # Evolution state
+        self.population = [np.random.uniform(-2, 2, GENOME_SIZE) for _ in range(POPULATION_SIZE)]
+        self.best_fitness = -float('inf')
         self.best_weights = None
         self.stagnation_counter = 0
-
-        if not os.path.exists(WEIGHTS_DIR):
-            os.makedirs(WEIGHTS_DIR)
+        self.generation = 0
+        
+        self.generate_boxes()
+        os.makedirs(WEIGHTS_DIR, exist_ok=True)
         self._init_csv()
 
-    def runStepLogic(self, ann_model):
-        self.collision = bool(
-            (self.__ir_0.getValue() > 3000 or 
-             self.__ir_1.getValue() > 3000 or
-             self.__ir_2.getValue() > 3000 or
-             self.__ir_3.getValue() > 3000 or
-             self.__ir_4.getValue() > 3000 or
-             self.__ir_5.getValue() > 3000 or
-             self.__ir_6.getValue() > 3000)
-        )
-        if self.collision:
-            self.collisions_time += 1
+    def generate_boxes(self):
+        """Generate random obstacle boxes in the environment"""
+        for i in range(6):
+            pos = random_position(0.4, 1.45, 1)
+            orient = random_orientation()
+            length = np.random.uniform(0.05, 0.2)
+            width = np.random.uniform(0.05, 0.2)
             
-        raw_ground_sensor_values = [sensor.getValue() for sensor in self.ground_sensors]
-        gs_max_value = 1023.0
-        normalized_inputs = [(value / gs_max_value) * 2.0 - 1.0 for value in raw_ground_sensor_values]
+            box_string = f"""
+            DEF WHITE_BOX_{i} Solid {{
+              translation {pos[0]} {pos[1]} {pos[2]}
+              rotation {orient[0]} {orient[1]} {orient[2]} {orient[3]}
+              physics Physics {{ density 1000.0 }}
+              children [
+                Shape {{
+                  appearance Appearance {{
+                    material Material {{ diffuseColor 1 1 1 }}
+                  }}
+                  geometry Box {{ size {length} {width} 0.2 }}
+                }}
+              ]
+              boundingObject Box {{ size {length} {width} 0.2 }}
+            }}"""
+            self.root.getField('children').importMFNodeFromString(-1, box_string)
+
+    def del_boxes(self):
+        """Remove all boxes from the scene"""
+        for i in range(self.root.getField('children').getCount()):
+            node = self.root.getField('children').getMFNode(i)
+            if (node.getTypeName() == "Solid" and node.getDef() and 
+                node.getDef().startswith("WHITE_BOX_")):
+                self.root.getField('children').removeMF(i)
+                return self.del_boxes()  # Recursive call due to index changes
+
+    def get_sensor_data(self):
+        # Proximity sensors (front, center-front, center)
+        prox = [self.prox_sensors[i].getValue() for i in [0, 2, 4]]
+        prox_norm = [(v / 4230.0) * 2.0 - 1.0 for v in prox]
         
-        proximity_max_value = 4230.0
-        proximity_inputs = np.array([self.__ir_0.getValue(), self.__ir_2.getValue(), self.__ir_4.getValue()]).reshape(1, 3)
-        normalized_proximity = [(value / proximity_max_value) * 2.0 - 0.5 for value in proximity_inputs]
+        # Ground sensors
+        ground_norm = [(s.getValue() / 1023.0) * 2.0 - 1.0 for s in self.ground_sensors]
         
-        inputs = np.concatenate((np.array(normalized_inputs), normalized_proximity), axis=None)
-        motor_speeds = ann_model.forward(inputs)
-        left_speed, right_speed = float(motor_speeds[0]), float(motor_speeds[1])
-
-        left_speed = np.clip(left_speed, -self.max_motor_velocity, self.max_motor_velocity)
-        right_speed = np.clip(right_speed, -self.max_motor_velocity, self.max_motor_velocity)
-        self.left_motor.setVelocity(left_speed)
-        self.right_motor.setVelocity(right_speed)
-
-        current_position = self.translation_field.getSFVec3f()
-        dx = current_position[0] - self.prev_position[0]
-        dy = current_position[1] - self.prev_position[1]
-        current_orientation = self.rotation_field.getSFRotation()
-        orientation_angle = current_orientation[3]
-
-        forward_x = math.sin(orientation_angle)
-        forward_y = -math.cos(orientation_angle)
-        forward_direction = np.array([forward_x, forward_y])
-        movement_direction = np.array([dx, dy])
-        movement_magnitude = np.linalg.norm(movement_direction)
-        if movement_magnitude > 1e-3:
-            normalized_movement = movement_direction / movement_magnitude
-            normalized_forward = forward_direction / np.linalg.norm(forward_direction)
-            dot_product = np.dot(normalized_movement, normalized_forward)
-            if dot_product < 0:
-                self.backward_movement_count += 1
-
-        self.position_history.append((current_position[0], current_position[1], orientation_angle))
-        if len(self.position_history) == STANDSTILL_CHECK_STEPS:
-            oldest_pos_x, oldest_pos_y, _ = self.position_history[0]
-            current_pos_x, current_pos_y, _ = self.position_history[-1]
-            pos_change_over_time = np.linalg.norm(np.array([current_pos_x, current_pos_y]) - np.array([oldest_pos_x, oldest_pos_y]))
-            if pos_change_over_time < STANDSTILL_POS_THRESHOLD:
-                self.standstill_count += 1
-
-        is_on_line = (raw_ground_sensor_values[0] < GROUND_SENSOR_THRESHOLD or
-                      raw_ground_sensor_values[1] < GROUND_SENSOR_THRESHOLD)
-        if is_on_line:
-            self.time_on_line += 1
-            self.total_net_displacement_vector += np.array([dx, dy])
-
-        self.prev_position = current_position
-        self.steps_survived += 1
-        return True
+        return np.array(prox_norm + ground_norm)
 
     def evaluate_individual(self, weights):
-        self.reset()
-        self.prev_position = self.translation_field.getSFVec3f()
+        self.reset_robot()
+        
+        # Metrics
+        time_on_line = backward_count = collision_time = standstill_count = 0
+        covered_positions = set()
+        prev_pos = None
+        position_history = deque(maxlen=2)
+        
+        ann = SimpleANN(weights)
         max_steps = int(EVALUATION_TIME * 1000 / self.timestep)
-        individual_ann = SimpleANN(weights)
-
-        while self.steps_survived < max_steps:
+        
+        for step in range(max_steps):
             if self.supervisor.step(self.timestep) == -1:
                 break
-            self.runStepLogic(individual_ann)
+                
+            # Control robot
+            inputs = self.get_sensor_data()
+            velocities = ann.forward(inputs)
+            
+            left_vel = np.clip(velocities[0], -self.max_vel, self.max_vel)
+            right_vel = np.clip(velocities[1], -self.max_vel, self.max_vel)
+            self.left_motor.setVelocity(left_vel)
+            self.right_motor.setVelocity(right_vel)
+            
+            current_pos = self.translation_field.getSFVec3f()
+            
+            # Check backward movement
+            if prev_pos:
+                dx, dy = current_pos[0] - prev_pos[0], current_pos[1] - prev_pos[1]
+                if np.linalg.norm([dx, dy]) > 1e-3:
+                    rotation = self.rotation_field.getSFRotation()
+                    forward = np.array([math.sin(rotation[3]), -math.cos(rotation[3])])
+                    if np.dot([dx, dy], forward) < 0:
+                        backward_count += 1
+            
+            # Track position history for standstill detection
+            position_history.append((current_pos[0], current_pos[1]))
+            if len(position_history) >= 2:
+                pos_change = np.linalg.norm(np.array(position_history[-1]) - np.array(position_history[0]))
+                if pos_change < STANDSTILL_THRESHOLD:
+                    standstill_count += 1
+                    if standstill_count >= 300:  # Too long without movement
+                        break
+            
+            # Time on line and area coverage
+            ground_values = [s.getValue() for s in self.ground_sensors]
+            if any(v < GROUND_THRESHOLD for v in ground_values):
+                if np.linalg.norm([dx if prev_pos else 0, dy if prev_pos else 0]) > 9.4e-3:
+                    grid_pos = (int(current_pos[0] / 0.05), int(current_pos[1] / 0.05))
+                    covered_positions.add(grid_pos)
+                    time_on_line += 1
+            
+            # Collision detection
+            if any(s.getValue() > 2000 for s in self.prox_sensors):
+                collision_time += 1
+            
+            prev_pos = current_pos
+        
+        # Calculate fitness
+        fitness = (len(covered_positions) * W_DISPLACEMENT +
+                  time_on_line * W_TIME_ON_LINE +
+                  backward_count * W_BACKWARD +
+                  collision_time * W_COLLISION * (self.generation + 1) * 0.1 +
+                  step * 0.001)
+        
+        return (fitness, len(covered_positions), time_on_line, step, 
+                backward_count, standstill_count, collision_time)
 
-        net_displacement_magnitude = np.linalg.norm(self.total_net_displacement_vector)
-        backward_penalty = W_BACKWARD_PENALTY * self.backward_movement_count
-        standstill_penalty = W_STANDSTILL_PENALTY * self.standstill_count
-        collisions_penalty = W_COLLISION * self.collisions_time
-
-        final_fitness = (
-            net_displacement_magnitude * W_NET_DISPLACEMENT +
-            self.time_on_line * W_TIME_ON_LINE +
-            backward_penalty +
-            standstill_penalty +
-            collisions_penalty
-        )
-
-        return final_fitness, net_displacement_magnitude, self.time_on_line, self.standstill_count, self.collisions_time
-
-    def _init_csv(self):
-        write_header = not os.path.exists(CSV_FILENAME) or os.path.getsize(CSV_FILENAME) == 0
-        with open(CSV_FILENAME, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            if write_header:
-                header = [
-                    "Generation", "Best_Fitness", "Avg_Fitness",
-                    "Net_Displacement", "Time_On_Line",
-                    "Standstill_Count",
-                    "Stagnation_Counter", "Weights_Filename"
-                ]
-                writer.writerow(header)
-
-    def _log_generation_to_csv(self, generation_data):
-        with open(CSV_FILENAME, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(generation_data)
-
-    def create_initial_population(self):
-        population = []
-        for _ in range(POPULATION_SIZE):
-            weights = np.random.uniform(0, 2, GENOME_SIZE)
-            population.append(weights)
-        return population
+    def reset_robot(self):
+        self.robot_node.resetPhysics()
+        self.translation_field.setSFVec3f([0, 0, 0.02])
+        self.rotation_field.setSFRotation(random_orientation())
+        self.supervisor.step(self.basic_timestep)
+        for motor in [self.left_motor, self.right_motor]:
+            motor.setVelocity(0)
 
     def mutate(self, weights):
         new_weights = weights.copy()
-        for i in range(len(new_weights)):
-            if random.random() < MUTATION_RATE:
-                noise = np.random.normal(0, MUTATION_SIZE)
-                new_weights[i] += noise
+        mask = np.random.random(len(new_weights)) < MUTATION_RATE
+        new_weights[mask] += np.random.uniform(-MUTATION_SIZE, MUTATION_SIZE, np.sum(mask))
         return new_weights
 
-    def reset(self):
-        self.robot_node.resetPhysics()
-        initial_pos = [0, 0, 0.02]
-        initial_rot = random_orientation()
-        self.translation_field.setSFVec3f(initial_pos)
-        self.rotation_field.setSFRotation(initial_rot)
-        self.supervisor.step(self.basic_timestep)
-
-        self.left_motor.setVelocity(0)
-        self.right_motor.setVelocity(0)
-        self.time_on_line = 0
-        self.steps_survived = 0
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.collisions_time = 0
-        self.position_history.clear()
-        self.initial_orientation = self.rotation_field.getSFRotation()
+    def _init_csv(self):
+        if not os.path.exists(CSV_FILE) or os.path.getsize(CSV_FILE) == 0:
+            with open(CSV_FILE, 'w', newline='') as f:
+                csv.writer(f).writerow([
+                    "Generation", "Best_Fitness", "Avg_Fitness", "Area_Coverage",
+                    "Time_On_Line", "Steps_Survived", "Backward_Movement_Count",
+                    "Standstill_Count", "Collision_Time", "Stagnation_Counter"
+                ])
 
     def run_evolution(self):
-        print("start evo")
-        print(f"pop {POPULATION_SIZE} gens {GENERATIONS} stag {STAGNATION_LIMIT}")
-        print("fitness weights set")
-        print("ann config ok")
-        print("sensor threshold")
-        print("standstill config")
-        print("---")
-
+        print(f"Starting evolution: {POPULATION_SIZE} individuals, {GENERATIONS} generations")
+        
         for generation in range(GENERATIONS):
-            evaluation_results = []
-            print(f"gen {generation + 1}")
-            start_gen_time = time.time()
-
+            self.generation = generation
+            print(f"\nGeneration {generation + 1}/{GENERATIONS}")
+            
+            # Regenerate obstacles each generation
+            self.del_boxes()
+            self.generate_boxes()
+            
+            # Evaluate population
+            results = []
             for i, weights in enumerate(self.population):
-                if self.supervisor.simulationGetMode() != self.supervisor.SIMULATION_MODE_FAST:
-                    self.supervisor.simulationSetMode(self.supervisor.SIMULATION_MODE_FAST)
-                    self.supervisor.step(self.basic_timestep)
-
-                fitness, net_disp, time_on_line, standstill_count, collisions_time = self.evaluate_individual(weights)
-                evaluation_results.append({
-                    'fitness': fitness,
-                    'net_displacement': net_disp,
-                    'time_on_line': time_on_line,
-                    'standstill_count': standstill_count,
-                    'weights': weights
+                fitness, area, time_line, steps, backward, standstill, collisions = self.evaluate_individual(weights)
+                results.append({
+                    'fitness': fitness, 'area': area, 'time_line': time_line,
+                    'steps': steps, 'backward': backward, 'standstill': standstill,
+                    'collisions': collisions, 'weights': weights
                 })
-
-                if (i + 1) % max(1, POPULATION_SIZE // 3) == 0 or i == POPULATION_SIZE - 1:
-                    print(f"eval {i+1}/{POPULATION_SIZE}")
-
-            evaluation_results.sort(key=lambda x: x['fitness'], reverse=True)
-
-            # Select top PARENTS_KEEP individuals and generate new population using mutation only
-            next_population = [res['weights'] for res in evaluation_results[:PARENTS_KEEP]]
-            while len(next_population) < POPULATION_SIZE:
-                parent_weights = random.choice(next_population[:PARENTS_KEEP])
-                offspring_weights = self.mutate(parent_weights)
-                next_population.append(offspring_weights)
-
-            self.population = next_population
-
-            gen_best_result = evaluation_results[0]
-            gen_best_fitness = gen_best_result['fitness']
-            finite_fitnesses = [res['fitness'] for res in evaluation_results if np.isfinite(res['fitness'])]
-            gen_avg_fitness = np.mean(finite_fitnesses) if finite_fitnesses else -float('inf')
-
-            best_gen_weights_filename = os.path.join(WEIGHTS_DIR, f"gen_{generation+1:04d}.npy")
-            np.save(best_gen_weights_filename, gen_best_result['weights'])
-
-            improvement_threshold = 1e-3
-            if gen_best_fitness > self.overall_best_fitness + improvement_threshold:
-                print(f"new best {gen_best_fitness:.2f}")
-                self.overall_best_fitness = gen_best_fitness
-                self.best_weights = gen_best_result['weights'].copy()
+                
+                if (i + 1) % max(1, POPULATION_SIZE // 3) == 0:
+                    print(f"  Evaluated {i + 1}/{POPULATION_SIZE}")
+            
+            # Sort by fitness
+            results.sort(key=lambda x: x['fitness'], reverse=True)
+            best_result = results[0]
+            best_fitness = best_result['fitness']
+            avg_fitness = np.mean([r['fitness'] for r in results if np.isfinite(r['fitness'])])
+            
+            # Save generation best
+            np.save(os.path.join(WEIGHTS_DIR, f"gen_{generation + 1:04d}.npy"), best_result['weights'])
+            
+            # Check for improvement
+            if best_fitness > self.best_fitness + 0.1:
+                print(f"  New best fitness: {best_fitness:.2f}")
+                self.best_fitness = best_fitness
+                self.best_weights = best_result['weights'].copy()
                 np.save(BEST_WEIGHTS_FILE, self.best_weights)
                 self.stagnation_counter = 0
             else:
                 self.stagnation_counter += 1
-
+            
+            # Log results
             log_data = [
-                generation + 1,
-                round(gen_best_fitness, 4) if np.isfinite(gen_best_fitness) else 'NaN',
-                round(gen_avg_fitness, 4) if np.isfinite(gen_avg_fitness) else 'NaN',
-                round(gen_best_result['net_displacement'], 3),
-                gen_best_result['time_on_line'],
-                gen_best_result['standstill_count'],
-                self.stagnation_counter,
-                os.path.basename(best_gen_weights_filename)
+                generation + 1, round(best_fitness, 4), round(avg_fitness, 4),
+                best_result['area'], best_result['time_line'], best_result['steps'],
+                best_result['backward'], best_result['standstill'], best_result['collisions'],
+                self.stagnation_counter
             ]
-            self._log_generation_to_csv(log_data)
-
-            print(f"gen {generation+1} best {log_data[1]} avg {log_data[2]} stag {self.stagnation_counter}")
-            print(f"gen best disp {gen_best_result['net_displacement']:.1f} line {gen_best_result['time_on_line']} still {gen_best_result['standstill_count']}")
-
+            
+            with open(CSV_FILE, 'a', newline='') as f:
+                csv.writer(f).writerow(log_data)
+            
+            print(f"  Best: {best_fitness:.2f} | Avg: {avg_fitness:.2f} | Stagnation: {self.stagnation_counter}")
+            print(f"  Area: {best_result['area']} | Steps: {best_result['steps']} | Collisions: {best_result['collisions']}")
+            
+            # Check stagnation
             if self.stagnation_counter >= STAGNATION_LIMIT:
-                print("stop stag")
+                print("Stagnation limit reached!")
                 break
-
-        if generation == GENERATIONS - 1:
-            print("stop max gen")
-
-        print("evo done")
-        if self.best_weights is not None:
-            print(f"best total {self.overall_best_fitness:.2f}")
-            best_overall_weights_filename = f"best_weights_overall_fitness_{self.overall_best_fitness:.2f}.npy"
-            print(f"save weights {best_overall_weights_filename}")
-            np.save(BEST_WEIGHTS_FILE, self.best_weights)
-        else:
-            print("no best found")
-
+            
+            # Create new population
+            self.population = [r['weights'] for r in results[:PARENTS_KEEP]]
+            while len(self.population) < POPULATION_SIZE:
+                parent = random.choice(self.population[:PARENTS_KEEP])
+                self.population.append(self.mutate(parent))
+        
+        print(f"\nEvolution complete! Best fitness: {self.best_fitness:.2f}")
         return self.best_weights
 
 if __name__ == "__main__":
-    evolution_controller = Evolution()
-    best_genome_overall = evolution_controller.run_evolution()
-    print("training complete")
+    evolution = Evolution()
+    best_weights = evolution.run_evolution()
+    print("Training complete!")

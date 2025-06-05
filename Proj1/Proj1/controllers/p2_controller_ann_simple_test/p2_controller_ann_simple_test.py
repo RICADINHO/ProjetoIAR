@@ -13,11 +13,6 @@ INPUT = 2
 HIDDEN = 4
 OUTPUT = 2
 
-GROUND_SENSOR_THRESHOLD = 200
-
-STANDSTILL_CHECK_STEPS = 2
-STANDSTILL_POS_THRESHOLD = 0.005
-
 BEST_WEIGHTS_FILE = "best_weights_ann_simple.npy"
 
 def random_orientation():
@@ -71,13 +66,9 @@ class RunBestSolution:
             else:
                 print("sensor missing")
 
-        self.time_on_line = 0
-        self.steps_survived = 0
+
         self.prev_position = self.translation_field.getSFVec3f()
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.position_history = deque(maxlen=STANDSTILL_CHECK_STEPS)
+
         self.initial_orientation = None
 
     def runStepLogic(self, ann_model):
@@ -95,43 +86,6 @@ class RunBestSolution:
         self.left_motor.setVelocity(left_speed)
         self.right_motor.setVelocity(right_speed)
 
-        current_position = self.translation_field.getSFVec3f()
-        dx = current_position[0] - self.prev_position[0]
-        dy = current_position[1] - self.prev_position[1]
-        current_orientation = self.rotation_field.getSFRotation()
-        orientation_angle = current_orientation[3]
-
-        forward_x = math.sin(orientation_angle)
-        forward_y = -math.cos(orientation_angle)
-        forward_direction = np.array([forward_x, forward_y])
-        movement_direction = np.array([dx, dy])
-        movement_magnitude = np.linalg.norm(movement_direction)
-        if movement_magnitude > 1e-3:
-            normalized_movement = movement_direction / movement_magnitude
-            normalized_forward = forward_direction / np.linalg.norm(forward_direction)
-            dot_product = np.dot(normalized_movement, normalized_forward)
-            if dot_product < 0:
-                self.backward_movement_count += 1
-
-        self.position_history.append((current_position[0], current_position[1], orientation_angle))
-        if len(self.position_history) == STANDSTILL_CHECK_STEPS:
-            oldest_pos_x, oldest_pos_y, _ = self.position_history[0]
-            current_pos_x, current_pos_y, _ = self.position_history[-1]
-
-            pos_change_over_time = np.linalg.norm(np.array([current_pos_x, current_pos_y]) - np.array([oldest_pos_x, oldest_pos_y]))
-
-            if pos_change_over_time < STANDSTILL_POS_THRESHOLD:
-                self.standstill_count += 1
-
-        is_on_line = (raw_ground_sensor_values[0] < GROUND_SENSOR_THRESHOLD or
-                      raw_ground_sensor_values[1] < GROUND_SENSOR_THRESHOLD)
-
-        if is_on_line:
-            self.time_on_line += 1
-            self.total_net_displacement_vector += np.array([dx, dy])
-
-        self.prev_position = current_position
-        self.steps_survived += 1
         return True
 
     def reset(self):
@@ -144,12 +98,7 @@ class RunBestSolution:
 
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
-        self.time_on_line = 0
-        self.steps_survived = 0
-        self.total_net_displacement_vector = np.array([0.0, 0.0])
-        self.backward_movement_count = 0
-        self.standstill_count = 0
-        self.position_history.clear()
+     
         self.initial_orientation = self.rotation_field.getSFRotation()
 
     def _load_weights_from_file(self, filepath):
@@ -206,13 +155,7 @@ class RunBestSolution:
                  break
             self.runStepLogic(best_ann)
 
-        print("visualization stats")
-        net_displacement_magnitude = np.linalg.norm(self.total_net_displacement_vector)
-        print(f"steps completed: {self.steps_survived}")
-        print(f"time on line: {self.time_on_line}")
-        print(f"net displacement: {net_displacement_magnitude:.1f}")
-        print(f"standstill count: {self.standstill_count}")
-        print("---")
+
 
 
 if __name__ == "__main__":
