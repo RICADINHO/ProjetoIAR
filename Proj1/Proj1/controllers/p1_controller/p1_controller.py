@@ -107,8 +107,8 @@ class Evolution:
         if self.collision:
             return False
         
-        ground_left = (self.ground_sensors[0].getValue() / 1023 - 0.6) / 0.2 > 0.3
-        ground_right = (self.ground_sensors[1].getValue() / 1023 - 0.6) / 0.2 > 0.3
+        ground_left = (self.ground_sensors[0].getValue() / 750)
+        ground_right = (self.ground_sensors[1].getValue() / 750)
         
         left_speed = ground_left * weights[0] + ground_right * weights[1] + weights[2]
         right_speed = ground_left * weights[3] + ground_right * weights[4] + weights[5]
