@@ -51,8 +51,8 @@ class SimpleRun:
         
         while self.supervisor.step(self.timestep) != -1:
             # Ground sensor processing
-            ground_left = (self.ground_sensors[0].getValue() / 1023 - 0.6) / 0.2 > 0.3
-            ground_right = (self.ground_sensors[1].getValue() / 1023 - 0.6) / 0.2 > 0.3
+            ground_left = (self.ground_sensors[0].getValue() / 750)
+            ground_right = (self.ground_sensors[1].getValue() / 750)
             
             # Direct motor control using best weights
             left_speed = (ground_left * self.weights[0] + 
