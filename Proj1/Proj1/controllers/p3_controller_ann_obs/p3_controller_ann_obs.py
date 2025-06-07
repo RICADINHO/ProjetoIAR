@@ -118,8 +118,8 @@ class Evolution:
 
     def generate_boxes(self):
         """Gera caixas de obstáculos aleatórias no ambiente."""
-        for i in range(6):
-            pos = random_position(0.4, 1.45, 1)
+        for i in range(8):
+            pos = random_position(0.7, 1.6, 1)
             orient = random_orientation()
             length = np.random.uniform(0.05, 0.2)
             width = np.random.uniform(0.05, 0.2)

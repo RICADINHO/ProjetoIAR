@@ -42,34 +42,21 @@ class SimpleANN:
         self.w2 = weights[idx_w1:idx_w2].reshape(HIDDEN2, HIDDEN1 + 1)           # Hidden1 to Hidden2
         self.w3 = weights[idx_w2:].reshape(OUTPUT, HIDDEN2 + 1)                  # Hidden2 to Output
     
-    def tanh(self, x):
-        return np.tanh(x)
-    
     def forward(self, inputs):
         # Input layer to first hidden layer
-        inputs_with_bias = np.append(inputs, 1.0)
-        hidden1_inputs = np.dot(self.w1, inputs_with_bias)
-        hidden1_outputs = self.tanh(hidden1_inputs)
+        h1 = np.tanh(np.dot(self.w1, np.append(inputs, 1.0)))
         
-        # First hidden layer to second hidden layer
-        hidden1_with_bias = np.append(hidden1_outputs, 1.0)
-        hidden2_inputs = np.dot(self.w2, hidden1_with_bias)
-        hidden2_outputs = self.tanh(hidden2_inputs)
+        # First hidden layer to second hidden layer  
+        h2 = np.tanh(np.dot(self.w2, np.append(h1, 1.0)))
         
-        # Second hidden layer to output layer
-        hidden2_with_bias = np.append(hidden2_outputs, 1.0)
-        final_inputs = np.dot(self.w3, hidden2_with_bias)
-        final_outputs = self.tanh(final_inputs)
-        
-        # Scale outputs
-        motor_outputs = final_outputs * RANGE
-        return motor_outputs
+        # Second hidden layer to output layer - MATCH TRAINING EXACTLY
+        return np.tanh(np.dot(self.w3, np.append(h2, 1.0))) * 9
 
 class VisualizeSolution:
     def __init__(self):
         self.supervisor = Supervisor()
         self.robot_node = self.supervisor.getFromDef("ROBOT")
-        self.root = self.supervisor.getRoot()  # Add root node reference
+        self.root = self.supervisor.getRoot()
 
         self.translation_field = self.robot_node.getField("translation")
         self.rotation_field = self.robot_node.getField("rotation")
@@ -84,53 +71,39 @@ class VisualizeSolution:
         self.right_motor.setVelocity(0)
         self.max_motor_velocity = self.left_motor.getMaxVelocity()
 
-        self.ground_sensors = []
-        for i in range(2):
-            sensor_name = f'prox.ground.{i}'
-            sensor = self.supervisor.getDevice(sensor_name)
+        # Initialize sensors exactly like training
+        self.prox_sensors = [self.supervisor.getDevice(f'prox.horizontal.{i}') for i in range(7)]
+        self.ground_sensors = [self.supervisor.getDevice(f'prox.ground.{i}') for i in range(2)]
+
+        for sensor in self.prox_sensors + self.ground_sensors:
             sensor.enable(self.timestep)
-            self.ground_sensors.append(sensor)
 
-        self.ann_proximity_sensors = []
-        self.collision_proximity_sensors = []
+    def get_sensor_data(self):
+        """Get sensor data exactly like training code"""
+        prox = [self.prox_sensors[i].getValue() for i in [0, 2, 4]]
+        prox_norm = [(v / 4230.0) * 2.0 - 1.0 for v in prox]
 
-        ann_prox_indices = [0, 2, 4]
+        ground_norm = [(s.getValue() / 750.0) for s in self.ground_sensors]
 
-        for i in range(7):
-            sensor_name = f'prox.horizontal.{i}'
-            sensor = self.supervisor.getDevice(sensor_name)
-            sensor.enable(self.timestep)
-            self.collision_proximity_sensors.append(sensor)
-            if i in ann_prox_indices:
-                self.ann_proximity_sensors.append(sensor)
-
+        return np.array(prox_norm + ground_norm)
         
     def runStepLogic(self, ann_model):
-        raw_ground_sensor_values = [gs.getValue() for gs in self.ground_sensors]
-        gs_max_value = 750
-        normalized_ground_inputs = [(val / gs_max_value) for val in raw_ground_sensor_values]
+        # Use the same sensor data processing as training
+        inputs = self.get_sensor_data()
+        velocities = ann_model.forward(inputs)
 
-        raw_ann_proximity_values = [ps.getValue() for ps in self.ann_proximity_sensors]
-        prox_max_value = 4230.0
-        normalized_ann_proximity_inputs = [(val / prox_max_value) * 2.0 - 1 for val in raw_ann_proximity_values]
-
-        ann_inputs = np.concatenate((np.array(normalized_ground_inputs), np.array(normalized_ann_proximity_inputs)))
-
-        motor_speeds = ann_model.forward(ann_inputs)
-        left_speed, right_speed = float(motor_speeds[0]), float(motor_speeds[1])
-
-        left_speed = np.clip(left_speed, -self.max_motor_velocity, self.max_motor_velocity)
-        right_speed = np.clip(right_speed, -self.max_motor_velocity, self.max_motor_velocity)
-        self.left_motor.setVelocity(left_speed)
-        self.right_motor.setVelocity(right_speed)
+        left_vel = np.clip(velocities[0], -self.max_motor_velocity, self.max_motor_velocity)
+        right_vel = np.clip(velocities[1], -self.max_motor_velocity, self.max_motor_velocity)
+        
+        self.left_motor.setVelocity(left_vel)
+        self.right_motor.setVelocity(right_vel)
 
         return True
         
     def generate_boxes(self):
-        N = 7
-    
-        for i in range(N):
-            position = random_position(0.8, 1.2, 0.1)  # Fixed radius range
+        # Use same parameters as training (8 boxes, same radius range)
+        for i in range(8):
+            position = random_position(0.7, 1.6, 1)  # Match training parameters
             orientation = random_orientation()
             length = np.random.uniform(0.05, 0.2)
             width = np.random.uniform(0.05, 0.2)
@@ -164,29 +137,31 @@ class VisualizeSolution:
     def del_boxes(self):
         """Remove all boxes from the scene"""
         children_field = self.root.getField('children')
-        for i in range(children_field.getCount() - 1, -1, -1):  # Iterate backwards
+        for i in range(children_field.getCount() - 1, -1, -1):
             node = children_field.getMFNode(i)
             if node and node.getTypeName() == "Solid" and node.getDef() and node.getDef().startswith("WHITE_BOX_"):
                 children_field.removeMF(i)
 
     def reset(self):
         self.robot_node.resetPhysics()
-        initial_pos = [np.random.uniform(-0.2, 0.2), np.random.uniform(-0.2, 0.2), 0.02]
-        initial_rot = random_orientation()
-        self.translation_field.setSFVec3f(initial_pos)
-        self.rotation_field.setSFRotation(initial_rot)
+        # Match training reset position exactly
+        self.translation_field.setSFVec3f([0, 0, 0.02])
+        self.rotation_field.setSFRotation(random_orientation())
 
         self.supervisor.step(self.basic_timestep)
 
         self.left_motor.setVelocity(0)
         self.right_motor.setVelocity(0)
         
-        # Generate boxes once at the beginning
+        # Generate boxes
         self.generate_boxes()
         print("Generated obstacle boxes")
 
     def _load_weights_from_file(self, filepath):
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Weights file not found: {filepath}")
         loaded_weights = np.load(filepath)
+        print(f"Loaded weights shape: {loaded_weights.shape}")
         return loaded_weights
 
     def run_visualization(self, weights_file=None):
