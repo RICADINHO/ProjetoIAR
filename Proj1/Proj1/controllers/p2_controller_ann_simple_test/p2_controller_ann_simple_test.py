@@ -74,8 +74,8 @@ class RunBestSolution:
     def runStepLogic(self, ann_model):
         raw_ground_sensor_values = [sensor.getValue() for sensor in self.ground_sensors]
 
-        gs_max_value = 1023.0
-        normalized_inputs = [(value / gs_max_value) * 2.0 - 1.0 for value in raw_ground_sensor_values]
+        gs_max_value = 750
+        normalized_inputs = [(value / gs_max_value) for value in raw_ground_sensor_values]
         inputs = np.array(normalized_inputs)
 
         motor_speeds = ann_model.forward(inputs)
