@@ -17,7 +17,7 @@ OUTPUT = 2
 GROUND_SENSOR_THRESHOLD = 200
 PROXIMITY_SENSOR_THRESHOLD_FOR_COLLISION = 2000
 
-BEST_WEIGHTS_FILE = "best_weights_obstacules.npy"
+BEST_WEIGHTS_FILE = "best_weights_obstacles.npy"
 
 def random_orientation():
     angle = np.random.uniform(0, 2 * np.pi)
