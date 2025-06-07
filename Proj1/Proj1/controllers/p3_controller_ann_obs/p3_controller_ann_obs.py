@@ -106,7 +106,7 @@ class Evolution:
         for sensor in self.prox_sensors + self.ground_sensors:
             sensor.enable(self.timestep)
 
-        self.population = [np.random.uniform(-2, 2, GENOME_SIZE) for _ in range(POPULATION_SIZE)]
+        self.population = [np.random.uniform(0, 2, GENOME_SIZE) for _ in range(POPULATION_SIZE)]
         self.best_fitness = -float('inf')
         self.best_weights = None
         self.stagnation_counter = 0
