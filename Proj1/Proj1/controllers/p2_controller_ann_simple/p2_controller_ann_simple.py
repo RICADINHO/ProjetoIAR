@@ -106,7 +106,7 @@ class Evolution:
             bool: True se a simulação deve continuar, False caso contrário
         """
         ground_values = [sensor.getValue() for sensor in self.ground_sensors]
-        inputs = np.array([(v / 1023.0) * 2.0 - 1.0 for v in ground_values])
+        inputs = np.array([(v / 750) for v in ground_values])
 
         motor_speeds = ann_model.forward(inputs)
         for motor, speed in zip([self.left_motor, self.right_motor], motor_speeds):
