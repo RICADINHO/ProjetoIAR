@@ -159,7 +159,7 @@ class Evolution:
         prox = [self.prox_sensors[i].getValue() for i in [0, 2, 4]]
         prox_norm = [(v / 4230.0) * 2.0 - 1.0 for v in prox]
 
-        ground_norm = [(s.getValue() / 1023.0) * 2.0 - 1.0 for s in self.ground_sensors]
+        ground_norm = [(s.getValue() / 750.0) for s in self.ground_sensors]
 
         return np.array(prox_norm + ground_norm)
 
