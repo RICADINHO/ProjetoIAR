@@ -107,8 +107,8 @@ class VisualizeSolution:
         
     def runStepLogic(self, ann_model):
         raw_ground_sensor_values = [gs.getValue() for gs in self.ground_sensors]
-        gs_max_value = 1023.0
-        normalized_ground_inputs = [(val / gs_max_value) * 2.0 - 1.0 for val in raw_ground_sensor_values]
+        gs_max_value = 750
+        normalized_ground_inputs = [(val / gs_max_value) for val in raw_ground_sensor_values]
 
         raw_ann_proximity_values = [ps.getValue() for ps in self.ann_proximity_sensors]
         prox_max_value = 4230.0
